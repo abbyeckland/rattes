@@ -1,0 +1,125 @@
+function [calc2_MLRinput] = MLRinputApr25(convert1,convert2,data2norivers,MLRfilename,MLRfilename2,calc2_MLRinput)
+
+data=data2norivers;
+calc=calc2_MLRinput;
+t=calc.t;
+
+numdam=height(data);
+numt=numel(t);
+notsite=find(data.issite==0);
+site=find(data.issite==1);
+
+calc.trapp=NaN(numdam,1);
+   
+
+%% Trap efficiency for SA at dam series static
+
+% trap efficiency everywhere is static to create a SAatDAM series MLR based on initial TE 
+for j=1:numdam
+    postdam=find((t>=(data.yrc(j)) & (t<data.yrr(j))));
+    calc.trap(j,postdam)=1-1./(1+calc.kappa(j)*(((data.maxstor(j))/convert1)./((data.DA(j))/convert2))); %stationary trap efficiency
+    calc.cap(j,postdam)=data.maxstor(j);
+    clear postdam 
+end
+
+% Calculate SA at Dam using initial TE
+calc.SAatdam=calc.origDA;% this is the sediment contributing drainage area upstream from a reservoir X (does not include trap efficiency at reservoir X-that is "sedshed").
+
+imin=1;
+imax=max(data.Rank);
+for i=imin:imax
+    ranknum=find(data.Rank==i);
+    calc.sedshed(ranknum,:)=calc.SAatdam(ranknum,:).*calc.trap(ranknum,:); %km2, this will calc calc.sedshed 
+    calc.SedDAtoDS(ranknum,:)=calc.SAatdam(ranknum,:)-calc.sedshed(ranknum,:); %km2, this is the volume moving downstream past dam site in any given year
+    for val=ranknum'
+        if data.term(val)==0 %if it isn't a term dam, move that drainage area downstream
+            goesto=data.todam(val);
+            thatdam=find(data.SID==goesto);
+            calc.SAatdam(thatdam,:)=calc.SAatdam(thatdam,:)-(data.DA(val)-calc.SedDAtoDS(val,:)); %Adjusts SA at dam for next time loop. Rank of this dam must be higher than dam it comes from
+            %double check for any drainage area errors, can be caused by bad snaps on flow diversions- may need to relocate a dam and rerun resnet
+            if any(calc.SAatdam(thatdam,:)<0)
+                error('Drainage area errors downstream')
+            end
+            clear thatdam goesto
+        end
+    end
+end
+
+%% Now we will fill in the sites data to train the MLR model
+%Trap efficiency at sites, linear interp for MLR input (as did Kondolf & Minear)
+
+rise=calc.trap2-calc.trap1;
+run=(data.yr2-data.yr1);%
+m=rise./run; %
+b=calc.trap1-(m.*data.yr1);
+
+for j=site'
+    sur1=calc.sur1idx(j);
+    sur2=calc.sur2idx(j);
+
+    %trap including and between between survey 1 and 2 (matches calc.trap1 & calc.trap2 exactly)
+    btwn=(sur1:1:sur2);
+    calc.trap(j,btwn)=(m(j)*(t(btwn)))+b(j); %straight line
+
+    %make trap2 continue forward in time to end or dam removal
+    if ~isnan(calc.removedidx(j))
+        stop=calc.removedidx(j)-1;
+    else
+        stop=numt;
+    end
+    to_end=((sur2+1):1:stop);
+    calc.trap(j,to_end)=calc.trap2(j); %constant trap 2 to end of time
+
+    %calc the ave trap efficiency over the period between surveys for sites. linear for now
+    calc.AveTrap(j,1)=(sum(calc.trap(j,sur1:(sur2-1))))/(numel(sur1:(sur2-1))); % this is the average trap effiency btwn surveys
+    calc.wSAatdam(j)=(sum(calc.SAatdam(j,sur1:(sur2-1))))/(length(calc.SAatdam(j,sur1:(sur2-1)))); %km2, Time weighted sediment contributing DA upstream of Reservoir X
+    calc.wseddel(j)=(data.cap1(j)-data.cap2(j))/(calc.AveTrap(j)); %m3, volume of sediment delivered to reservoir X, between sur 1 and sur 2 (some passed through)
+    calc.wSDR(j)=calc.wseddel(j)/(numel(sur1:sur2-1));%m3/yr, Sediment delivery rate, mean volume of sediment delivered to surveyed reservoir X per year between surveys
+    calc.wSDRyield(j)=calc.wSDR(j)/calc.wSAatdam(j); %m3/km2/yr, sediment yield rate, volume of sed per year per km2 between sur 1 and sur 2. EXACT SAME AS reservoir sediment volume/((length sur1:sur2-1)*(calc.wsedshed));. in other words, volume of sediment delivered divided by Us sed DA is same as volume of sediment retained divided by effective sed DA
+    clear sur1 sur2 stop to_end btwn;
+end
+
+calc.trapp(:,1)=1-1./(1+calc.kappa.*((data.capp/convert1)./(data.DA/convert2)));
+calc.AveTrap(notsite)=0;
+
+%% Save MLR Input
+
+%Print things
+disp(['Total Prediction, with permanent storage not in SY model: ', num2str(numel(find(data.issite == 0 & data.sitetag1 == 0 & data.PermStorag==1)))]);
+disp(['Total Prediction, with permanent storage in SY model: ', num2str(numel(find(data.issite == 0 & data.sitetag1 > 0 & data.PermStorag==1)))]);
+disp(['Total sites with Permanent Storage: ', num2str(numel(find(data.issite == 1 & data.PermStorag==1)))]);
+disp(['Total reservoirs without Permanent Storage: ', num2str(numel(find(data.PermStorag==0)))]);
+
+%% Save MLR TimesSeries Input
+
+%has the static trap and cap used to create SA at dam series.
+data.wSDRyield=calc.wSDRyield;
+data.kappa=calc.kappa;
+data.trapp=calc.trapp;
+data.trap1=calc.trap1;
+data.trap2=calc.trap2;
+data.AveTrap=calc.AveTrap;
+data.wSAatdam=calc.wSAatdam;
+data.fromdam=[];
+data.todam=[];
+data.flag=[];
+
+data.sitetags = cellfun(@(x) strjoin(string(x), ','), data.sitetags, 'UniformOutput', false);
+data.rivertags = cellfun(@(x) strjoin(string(x), ','), data.rivertags, 'UniformOutput', false);
+
+% Save the table to a CSV file
+writetable(data, MLRfilename,'Delimiter',',');
+
+%timeseries output, for MLR input
+MLR_SAatdam_timeseries=NaN((numdam+1),(numt+1));
+MLR_SAatdam_timeseries(1,2:end)=t;
+MLR_SAatdam_timeseries(2:end,1)=data.SID;
+MLR_SAatdam_timeseries(2:end,2:end)=calc.SAatdam(:,:);
+writematrix(MLR_SAatdam_timeseries,MLRfilename2,'Delimiter',',');
+
+disp('Done with MLR input');
+calc2_MLRinput=calc;
+
+save('MLRdata.mat','calc2_MLRinput','-v7.3');
+disp('Done with MLR input')
+end

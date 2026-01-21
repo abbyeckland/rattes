@@ -1,0 +1,268 @@
+%% Sediment Yield model (following Minear and Kondolf) and file prep for Multiple Linear Regression model component of RATTES
+clear
+close all
+tic
+
+loadpart1results="no";
+
+if loadpart1results=="yes"
+    load SYModelResults_MLRinput.mat
+    return
+end
+ clear loadpart1results
+%% setup
+
+inputdate='052225';
+inputdateMLR='010626';
+
+inputs= "no";
+RankTag= "no";
+setcalc= "no";
+FirstYield="no";
+FinalYield="no";
+MLRinput="yes";
+
+%% conversions
+%conversions,
+convert1=1233.482; %converts m3 to ac-ft is convert1*AF=m3, or from m3 is m3/convert1=AF
+convert2= 2.59; %converts km2 and mi2 is convert2*mi2= km2 or from km2 is km2/convert2=mi2
+
+%% Add inputs and data cleaning, fill in missing yrc within this function.
+if inputs == "yes"
+    fmt="ResNetInput_SitesCanada_%s.csv";
+    filename=sprintf(fmt,inputdate); clear fmt;
+    [InputAll] = AddInputsUpdates(filename);
+    clear filename; 
+else
+    load Inputs.mat;
+end
+clear inputs
+%% Rank from headwaters to 
+if RankTag == "yes"
+    [data1wrivers,data2norivers,data3SYmodel] = RankTagApr25(InputAll);
+else
+    load RankTag.mat;
+end
+clear RankTag
+
+%% Set up initial calc matrices, fill with pre & post removal zeros. calc linear ave trap at sites.
+
+if setcalc == "yes"
+    [calc2_MLRinput,calc3_SY1,calc4_SY2] = SetCalcMatrix(data2norivers,convert1,convert2);
+    %calc2 goes with data2; calc3 goes with data3
+else
+    load setcalc.mat
+end
+clear setcalc
+
+%% set up calc4input for error estimates
+%calc4_SY2err=calc4_SY2;
+%% Sediment yield function
+
+if FirstYield == "yes"
+    [data3SYmodel,calc3_SY1] = FirstYieldFunctionApr25(data3SYmodel,calc3_SY1,convert1,convert2);
+else
+    load Yield1.mat;
+end
+clear FirstYield
+
+%% Final Yield Function
+
+if FinalYield == "yes"
+    %fmt='CapCalc%s_toComparewMLR.csv';
+    %OutputCapName=sprintf(fmt,inputdate); clear fmt;
+    %fmt='CalcSed%s_toComparewMLR.csv';
+    %OutputSedName=sprintf(fmt,inputdate); clear fmt;
+    %fmt='CalcTrap%s_toComparewMLR.csv';
+    %OutputTrapName=sprintf(fmt,inputdate); clear fmt;
+    %[data4SYmodel,calc4_SY2] = FinalYieldFunctionApr25(data3SYmodel,calc4_SY2,calc3_SY1,convert1,convert2,OutputCapName,OutputSedName, OutputTrapName);
+    [data4SYmodel,calc4_SY2] = FinalYieldFunctionApr25(data3SYmodel,calc4_SY2,calc3_SY1,convert1,convert2);
+    %clear OutputSedName OutputCapName OutputTrapName
+else
+    load YieldFinal.mat
+end
+clear FinalYield OutputCapName OutputSedName OutputTrapName
+
+
+%% MLR input
+if MLRinput == "yes"
+    fmt='MLR_Input%s.csv';
+    MLRfilename=sprintf(fmt,inputdate); clear fmt;
+    fmt='MLR_SAatDamInitial%s.csv';
+    MLRfilename2=sprintf(fmt,inputdate); clear fmt;
+    [calc2_MLRinput] = MLRinputApr25(convert1,convert2,data2norivers,MLRfilename,MLRfilename2,calc2_MLRinput);
+    clear MLRfilename; clear MLRfilename2;
+else
+    load MLRdata.mat;
+end
+clear MLRinput;
+
+%% Save Model Part 1
+% clear inputdate inputdateMLR
+
+save('SYModelResults_MLRinput.mat','-v7.3');
+
+toc
+
+%% Calc MLR backwards and combine with site data to match original input dam length
+
+%need to add 95% confidence interval going backwards
+
+if modelcombo == "yes"
+    fmt='mlr_trap_decimal_%s.csv';
+    filenameMLRtrap=sprintf(fmt,inputdateMLR); clear fmt;
+    fmt='mlr_cap_up_95_%s.csv';
+    filenameMLRcapup=sprintf(fmt,inputdateMLR); clear fmt;
+    fmt='mlr_cap_low_95_%s.csv';
+    filenameMLRcaplow=sprintf(fmt,inputdateMLR); clear fmt;
+    fmt='mlr_cap_%s.csv';
+    filenameMLRcap=sprintf(fmt,inputdateMLR); clear fmt;
+    fmt='mlr_sv_up_95_%s.csv';
+    filenameMLRsvup=sprintf(fmt,inputdateMLR); clear fmt;
+    fmt='mlr_sv_low_95_%s.csv';
+    filenameMLRsvlow=sprintf(fmt,inputdateMLR); clear fmt;
+    fmt='mlr_sv_%s.csv';
+    filenameMLRsv=sprintf(fmt,inputdateMLR); clear fmt;
+   [data5all,calc5all] = CombineMLRSY(filenameMLRtrap,filenameMLRcap,filenameMLRcapup,filenameMLRcaplow,filenameMLRsv,filenameMLRsvup,filenameMLRsvlow,data2norivers,calc2_MLRinput,data4SYmodel,calc4_SY2,convert1,convert2);
+   clear filenameMLRtrap filenameMLRcap filenameMLRcapup filenameMLRcaplow filenameMLRsv filenameMLRsvup filenameMLRsvlow
+else
+    load ComboModel.mat
+end
+clear modelcombo;
+
+%% compare model results
+%at dams with perm storage in the US only. Also, SY model predictions had to use a downstream site with permanent storage.
+if compare=="yes"
+    [fignum,calc5all,data5all] = CompareSY_MLRAug25(calc5all,data5all,fignum);
+else
+    load CompareModels.mat;
+end
+clear compare;
+
+%% Calc sed contributing DA at rivers and all dams
+%includes all dams, including lock dams without permanent storage.
+
+if riversetup == "yes"
+    [data1wrivers,calc1all_wrivers] = RiverSedDAinput(data1wrivers,calc5all,data5all);%
+else
+    load riversetup.mat
+end
+clear riversetup;
+
+%% Calc sed contributing DA at rivers, and upstream sediment
+%Sed contributing DA includes all dams, including lock dams without
+%permanent storage in US for sediment and yield
+
+if riverDA == "yes"
+    [calc1all_wrivers,data1wrivers,data6_delta,calc6_delta,calc5all,fignum] = SDArivers(calc1all_wrivers,data1wrivers,calc5all,data5all,fignum);
+    clear doneriver;
+else
+    load riverSDA.mat
+end
+clear riverDA
+
+%% Terminal Dams & number of dams above rivers
+% this is with permanent storage us dams
+if termdeltadams=="yes"
+    [calc1all_wrivers,calc6_delta] = DeltaTerm(calc1all_wrivers,calc6_delta,calc5all,data5all,data1wrivers,data6_delta);
+else
+    load deltaterm.mat
+end
+clear termdeltadams
+
+%% Design figures
+if DesignFigs=="yes"
+    usbrfilename= 'USBRregions.csv';
+    [fignum,usbrstat] = Design(usbrfilename,calc5all,data5all,convert1,fignum);
+    clear usbrfilename
+else
+    load USBRcalcdata.mat
+end
+clear DesignFigs
+
+%% Sediment Yield vs. DA plot at sites
+if SYfig=="yes"
+    [fignum] = SYplotDA(calc4_SY2,data4SYmodel,fignum);
+end
+clear SYfig;
+
+%% Population analysis
+%US dams with permanent storage
+if popfig=="yes"
+    [fignum,CONUSpop] = PopConus(data5all,calc5all,fignum);
+else
+    load CONUSpop.mat
+end
+clear popfig
+
+%% Calc Sed by Outlet
+%calc'ed with US dams with permanent storage
+%except, percent of basin trapped has to include all area b/c the NHD
+%flowlines on boundaries incorporate canada or mex
+if out=="yes"
+    [calc7_OutHUC,data5all] = outletHUC(calc5all,data5all,convert1,convert2);
+else
+    load outHUC.mat
+end
+clear out;
+
+%% PathX figure, final cap fig
+%2025 cumulative sediment with distance from coast, US reservoirs with
+%permanent storage
+if pathx=="yes"
+    [fignum] = PathXFig(calc5all,data5all,data6_delta,calc6_delta,fignum);%
+end
+clear pathx
+
+
+%% Plot figures of MLR back projections to check these.
+if backfigs== "yes"
+    [fignum] = MLRbackfig(fignum,data5all,calc5all);
+end
+clear backfigs;
+
+%% Queries for paper
+if queries=="yes"
+    RATTESqueries(data5all,calc5all,data6_delta,calc6_delta);
+end
+clear queries
+
+%% Eckland et al Fig 2
+if paperfigs=="yes"
+    [fignum] = Eckland_PaperFigure2(data5all,calc5all,fignum);
+    [fignum] = Eckland_PaperFigure3(data5all,calc5all,fignum,calc6_delta,data6_delta);
+end
+clear paperfigs
+
+%% Export Result Data 2025
+if export25=="yes"
+    exportresults(data1wrivers,data5all,data6_delta,calc1all_wrivers,calc5all,calc6_delta,calc7_OutHUC);
+end
+clear export25
+
+%% Deleted for Eckland paper - will need to fix back projection error perhaps on SY samples 
+
+
+% %% FinalYieldFunction Error
+% if SYerr=="yes"
+%     percenterror=20; %test a percent error value applied to the volume of sedimentation
+%     nTests=100; %run the randomized error test up to 100 times. 
+%     [calc4_SY2err] = FinalYieldFunctionErrorAug25(percenterror,nTests,data3SYmodel,calc4_SY2err,calc3_SY1,convert1,convert2);
+% else
+%     load YieldFinal_Error.mat
+% end
+% 
+% calc4_SY2.capup=calc4_SY2err.capup;
+% calc4_SY2.caplo=calc4_SY2err.caplo;
+% clear SYerr nTests percenterror
+% 
+% %% SiteFigs
+% if SiteFigs=="yes"
+%     [fignum,calc4_SY2] = sitefigs(calc4_SY2,data4SYmodel,fignum,convert1,convert2);
+% else
+%     load SYerrupdates.mat
+% end
+% clear SiteFigs
+
+
+%%

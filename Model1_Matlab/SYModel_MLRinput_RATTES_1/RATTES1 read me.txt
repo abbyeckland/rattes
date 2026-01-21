@@ -1,0 +1,7 @@
+RATTES1 read me
+-Run the matlab code SedYield_MLRinput_Jan2026
+-Input files: ResNetInput_SitesCanada_052225
+-creates .mat file outputs and 2 csv output
+Needed for RATTES2:  MLR_Input052225.csv, MLR_SAatDamInitial052225.csv
+Needed for Rattes3:  (MLR output from RATTES2), SYModelResults_MLRinput.mat (final output from RATTES1)
+-intermediate mat files are created with each function- they can be loaded to avoid rerunning the entire code 

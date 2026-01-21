@@ -1,0 +1,11 @@
+#RESNET run notes
+-Regenerated ResNet (Hurst et al., 2025) with data from sites Sites_supptable.csv file
+--New fields introduced from our sites table into ResNet include: cap1, cap2, capp, PermStorag, yr1, yr2, yrp, Owner,  elev_m (converted from feet), sitename
+-During ResNet run, deleted fields: SCA2025, flagHW, flagTerm, Rank. Our code calculates sediment-contributing drainage area every model year, re-ranks dams with select Canadian dams, and uses the general flags field to identify headwater and terminal dams excluding rivers.
+-During ResNet run, we retain the following fields and attributes from NHD: SLOPE renamed NHDSLOPE, Pathlength renamed as pathx, QA_MA renamed MAQ_NHDcfs, WBCOMID (from LakeCat, joined to NHD).
+-During ResNet run, we retain the following fields and attributes from NID: SA_m2 (surface area converted to square meters)
+-Following the site example laid out in Resnet, we ran "SiteTag" for our sites instead of the example "GRanDTag" Resnet includes 
+-We renamed the following ResNet fields 
+FROM: "DivDASqKM","Dam_Len_m","PrimaryPur","DamH_m","delta","ToDam","IsUSBR","IsUSACE","GRAND_ID","MaxStor_m3","ShortID","Dam_Name","IsSite","IsGRanD","IsLock","IsRiverMth","FromDam","SiteTag","RiverTag","DeltaTag"
+TO:"DA","damlength_m","purpose","damH","deltaID","todam","isusbr","isusace","GID","maxstor","SID","NIDname","issite","isgrand","islock","isriver","fromdam","sitetag1","rivertag1","deltatag"
+See Hurst et al., 2025 for ResNet information and GitHub Repository: https://www.nature.com/articles/s41597-025-06315-8

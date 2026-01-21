@@ -1,0 +1,134 @@
+filename="ResNetInput_SitesCanada_052225.csv";
+
+
+%this function does basic cleaning and simplifies names
+
+%% Load ResNet. 
+% () flags (see below paragraph), 
+% () Country Out, (see below), 
+% () site tag, short ID of the most immediate site downstream from any given dam, 
+% () river tag, short ID of the most immediate downstream river mouth, 
+% () delta tag, short ID of the downstream delta
+% () islock= does the dam have locks, 
+% () isite is a sediment survey site, 
+% () pathx = total length from downstream node of dam hydrosequence to the terminal flow hydrosequence feature (km), from NHD, 
+
+%FLAG DESCRIPTION:  = 0 finished running, 1: terminal dam, 2: d/s hydrosequence = 0, 3: d/s hydrosequence = nan, 4: d/s hydrosequence missing from the NHD,...
+% 5: multiple dams on the same flowline; kept only one, 6: downstream DA smaller than upstream DA, 7: downstream DA equals upstream DA,...
+% 8: downstream storage equals upstream storage, 9: headwater dam, 
+
+%COUNTRY OUT: where terminal flowline goes: 11 canada to atlantic ocean; 12 canada to pacific ocean; 2 greatlakes; 31 mexico to atlantic ocean; 32 mexico to pacific ocean ; 
+% 41 exits US to atlantic ocean; 42 exits US to pacific ocean; 5 exits US to gulf of mexico atlantic ocean; 0 no coast (internally drained)
+
+
+%%
+data=readtable(filename,'Format','auto');
+nRows=height(data);
+
+%% clean combined data and rename fields
+
+%delete unneeded fields
+data(:, {'Moved','yrc_source'}) = [];
+
+% %rename fields to match naming conventions when code was created.
+% data=renamevars(data,["QA_MA","Pathlength","DivDASqKM","SLOPE","Dam_Len_m","PrimaryPur","DamH_m","delta","ToDam","IsUSBR","IsUSACE","Capm3_p","CapOrig_m3","CapNew_m3","Year_First","Year_Last","yr_p","GRAND_ID","USBRname","MaxStor_m3","ShortID","Dam_Name","Reservoir","IsSite","IsGRanD","IsLock","IsRiverMth","FromDam","SiteTag","RiverTag","DeltaTag"],...
+%                            ["MAQ_NHDcfs","pathx","DA","NHDslope","damlength_m","purpose","damH","deltaID","todam","isusbr","isusace","capp","cap1","cap2","yr1","yr2","yrp","GID","usbrname","maxstor","SID","NIDname","sitename","issite","isgrand","islock","isriver","fromdam","sitetag1","rivertag1","deltatag"]);
+
+% set non uniform output
+data.flag = cellfun(@eval, data.flag, 'UniformOutput', false);
+
+% Add new fields and initialize them with zeros
+data.yrcsub = zeros(nRows, 1); %will be binary flag of dams we had to assume a year of completion
+data.head = zeros(nRows, 1); %binary indicator of headwater dams
+data.term = zeros(nRows, 1); %binary indicator of terminal dams
+
+% identify headwater and terminal dams and create headwater/terminal dam fields
+data.head(cellfun(@(x) ismember(9, x), data.flag)) = 1;
+data.term(cellfun(@(x) ismember(1, x), data.flag)) = 1;
+
+%% make fields binary, remove Nans
+% To dam
+data.todam(isnan(data.todam)) = 0; % Change NaN in "ToDam" category to 0
+
+% Perm Storage, (if not flagged as 0, it has storage)
+data.PermStorag(isnan(data.PermStorag)) = 1;
+
+% Is River, Fill in nans with 0s
+data.isriver(isnan(data.isriver)) = 0;
+
+%% Fix date issues; missing yrc
+% Fix yrc, replace with 90th percentile of when dams were built
+% if first survey before dam built (yrc) change to yrc because sediment doesn't accumulate before dam closes- need to track from then
+% if yr dam removed is same as second survey, add a year to track sedimentation all the way through second survey year
+% if a recent survey showed capacity growth due to dam raise, better survey technique, no orig survey, etc. we use this as the sedimentation starting point (yrp and capp) 
+% if no yrp, then yrp=yrc
+% cap p is capacity at year p
+
+% Identify invalid and valid dates for year of completion
+nodate = data.yrc < 1700 | data.yrc > 2024;
+realdate = data.yrc >= 1700 & data.yrc <= 2024;
+
+% Replace invalid yrc dates with the 90th percentile of valid date
+yr_sub = prctile(data.yrc(realdate), 90);
+data.yrc(nodate) = yr_sub;
+
+% Mark substituted yrc dates
+data.yrcsub = (data.yrcsub | nodate); % Ensures existing markers are preserved
+
+% Fix if the first survey predates dam closure
+tooearly = (data.yr1 < data.yrc) & (data.issite == 1) & (data.isriver == 0);
+data.yr1(tooearly) = data.yrc(tooearly);
+
+% Fix year removed values (dam removal)
+data.yrr(isnan(data.yrr) | data.yrr == 0) = 3001; % Set future year way outside of sedimentation model time loop
+
+% Ensure year removed is at least 1 year after the second survey
+removeearly = (data.yrr == data.yr2);
+data.yrr(removeearly) = data.yrr(removeearly) + 1;
+
+% Fill in yrp where null or zero
+noyrp = isnan(data.yrp) | (data.yrp == 0);
+data.yrp(noyrp) = data.yrc(noyrp); % Set empty yrp as the same as yrc
+
+% Check if yrp is before yrc (pulled army corps data from a survey before the dam closed)
+yrpearly=find(data.yrp<data.yrc);
+data.yrp(yrpearly)=data.yrc(yrpearly);
+
+%% update capacity fields to fill out
+%maxstor is already capc at nonsites or capp at non sites with later surveys.
+% we will overwrite maxstor later
+data.capp=data.maxstor;
+
+%% Fill in blank owners
+a=strcmp(data.Owner,'');b=find(a==1);
+data.Owner(b)=cellstr('Not Listed');
+clear a b;
+
+%% correct USBR / USACE owner names
+usbr=find(data.isusbr==1);
+data.Owner(usbr)=cellstr('Reclamation');
+
+usace=find(data.isusace==1);
+data.Owner(usace)=cellstr('USACE');
+
+%% Print Informative Things
+% check number of sites and number of NIDdams at beginning
+
+%Print things
+disp(['Number of sites: ', num2str(sum(data.issite == 1 & data.isriver == 0))]);
+disp(['Number of rivers: ', num2str(sum(data.isriver == 1))]);
+disp(['Number of dams: ', num2str(sum(data.isriver == 0))]);
+disp(['Number of USBR: ', num2str(sum(data.isusbr == 1))]);
+disp(['Number of USACE: ', num2str(sum(data.isusace == 1))]);
+disp(['Storage of dams without a real completion date (m^3): ', num2str(sum(data.maxstor(nodate)))]);
+disp(['Number of dams without a completion date: ', num2str((sum(nodate==1)))]);
+disp(['Percentage of total storage without a completion date: ', num2str(sum(data.maxstor(nodate)) / sum(data.maxstor(:)) * 100), '%']);
+
+InputAll=data;
+save('Inputs.mat','InputAll');
+% 
+
+
+
+
+
